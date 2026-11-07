@@ -26,34 +26,135 @@ struct Scanner {
 
 impl Scanner {
     fn run(&mut self) {
-        // TODO(you): drive the scan: read one token at a time until the source runs out, then
-        //            add the EOF token. Spec 6.1 says which line EOF carries.
-        todo!("run")
+        while !self.at_end() {
+            self.start = self.current;
+            self.scan_token();
+        }
+        // Spec 6.1: EOF carries the line of the last real token, not the line the
+        // file happens to end on.
+        let eof_line = self.tokens.last().map(|t| t.line).unwrap_or(1);
+        self.tokens.push(Token {
+            kind: TokenType::Eof,
+            lexeme: String::new(),
+            line: eof_line,
+        });
     }
 
     fn scan_token(&mut self) {
-        // TODO(you): recognise one token. Spec 1.2 lists every token type, 1.1 covers
-        //            whitespace and comments, and an unrecognised character is 'Character is
-        //            not part of any token.' (5.1).
-        todo!("scan_token")
+        let c = self.advance();
+        match c {
+            '(' => self.add(TokenType::LParen),
+            ')' => self.add(TokenType::RParen),
+            '{' => self.add(TokenType::LBrace),
+            '}' => self.add(TokenType::RBrace),
+            ',' => self.add(TokenType::Comma),
+            ';' => self.add(TokenType::Semicolon),
+
+            '+' => self.add(TokenType::Plus),
+            '-' => self.add(TokenType::Minus),
+            '*' => self.add(TokenType::Star),
+
+            '!' => {
+                let kind = if self.matches('=') {
+                    TokenType::BangEqual
+                } else {
+                    TokenType::Bang
+                };
+                self.add(kind);
+            }
+            '=' => {
+                let kind = if self.matches('=') {
+                    TokenType::EqualEqual
+                } else {
+                    TokenType::Equal
+                };
+                self.add(kind);
+            }
+            '>' => {
+                let kind = if self.matches('=') {
+                    TokenType::GreaterEqual
+                } else {
+                    TokenType::Greater
+                };
+                self.add(kind);
+            }
+            '<' => {
+                let kind = if self.matches('=') {
+                    TokenType::LessEqual
+                } else {
+                    TokenType::Less
+                };
+                self.add(kind);
+            }
+
+            '/' => {
+                if self.matches('/') {
+                    // Spec 1.1: a comment runs from // to end of line and is
+                    // discarded. Stop at the newline without consuming it.
+                    while self.peek() != '\n' && !self.at_end() {
+                        self.advance();
+                    }
+                } else {
+                    self.add(TokenType::Slash);
+                }
+            }
+
+            ' ' | '\r' | '\t' => {} // Spec 1.1: whitespace separates tokens.
+
+            '\n' => {
+                self.line += 1;
+            }
+
+            '"' => self.string(),
+
+            '0'..='9' => self.number(),
+
+            c if c.is_alphabetic() || c == '_' => self.identifier(),
+
+            _ => {
+                self.error(self.line, "Character is not part of any token.");
+            }
+        }
     }
 
     fn string(&mut self) {
-        // TODO(you): scan a string literal. A string may span lines, and an unterminated one is
-        //            reported at the line it opened on (1.5; the message is in 5.1).
-        todo!("string")
+        // Spec 1.5: an unterminated string is reported at the line it started.
+        let opening_line = self.line;
+        while self.peek() != '"' && !self.at_end() {
+            if self.peek() == '\n' {
+                self.line += 1;
+            }
+            self.advance();
+        }
+        if self.at_end() {
+            self.error(opening_line, "String is never closed.");
+            return;
+        }
+        self.advance(); // closing quote
+        self.add(TokenType::Str);
     }
 
     fn number(&mut self) {
-        // TODO(you): scan a number literal: digits, then a fractional part only when a digit
-        //            follows the dot (1.4).
-        todo!("number")
+        while self.peek().is_ascii_digit() {
+            self.advance();
+        }
+        // Spec 1.4: a '.' begins a fractional part only when a digit follows.
+        if self.peek() == '.' && self.peek_next().is_ascii_digit() {
+            self.advance(); // the '.'
+            while self.peek().is_ascii_digit() {
+                self.advance();
+            }
+        }
+        self.add(TokenType::Number);
     }
 
     fn identifier(&mut self) {
-        // TODO(you): scan an identifier, then decide whether it is a keyword; keyword() in
-        //            token.rs does the lookup (1.2, 1.3).
-        todo!("identifier")
+        while self.peek().is_alphanumeric() || self.peek() == '_' {
+            self.advance();
+        }
+        let text: String = self.src[self.start..self.current].iter().collect();
+        let kind = keyword(&text).unwrap_or(TokenType::Identifier);
+        self.add(kind);
     }
 
     // --- primitives ---------------------------------------------------------------
