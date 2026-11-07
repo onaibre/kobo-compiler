@@ -384,14 +384,17 @@ impl Parser {
     /// Discard tokens until just past a `;`, or on a keyword that can only begin a
     /// statement (spec section 5.2). It always steps over at least one token first: a
     /// recovery that could stand still would hang on the token that caused the error.
-    fn synchronise(&mut self) {
+     fn synchronise(&mut self) {
         self.depth = 0;
-        loop {
-            if self.at_end() {
-                break;
-            }
+
+        // The first discard guarantees progress.
+        if !self.at_end() {
+            self.current += 1;
+        }
+
+        while !self.at_end() {
             if self.previous().kind == TokenType::Semicolon {
-                break;
+                return;
             }
             match self.peek().kind {
                 TokenType::Fun
@@ -399,7 +402,7 @@ impl Parser {
                 | TokenType::If
                 | TokenType::While
                 | TokenType::Print
-                | TokenType::Return => break,
+                | TokenType::Return => return,
                 _ => {
                     self.current += 1;
                 }
