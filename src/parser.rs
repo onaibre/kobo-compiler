@@ -405,7 +405,7 @@ impl Parser {
                 }
             }
         }
-    
+    }
 
     /// Wraps a value as a literal node carrying the line of the token just consumed.
     fn literal(&self, value: Value) -> Expr {
