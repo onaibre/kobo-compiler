@@ -51,7 +51,7 @@ impl Parser {
         }
     }
 
-fn fun_declaration(&mut self) -> Parsed<Stmt> {
+    fn fun_declaration(&mut self) -> Parsed<Stmt> {
         let name = self.consume(TokenType::Identifier, "Expect function name.")?;
         self.consume(TokenType::LParen, "Expect '(' after function name.")?;
 
@@ -90,8 +90,18 @@ fn fun_declaration(&mut self) -> Parsed<Stmt> {
     }
 
     fn var_declaration(&mut self) -> Parsed<Stmt> {
-        // TODO(you): spec 3.1: 'var' name ( '=' expression )? ';'
-        todo!("var_declaration")
+        let name = self.consume(TokenType::Identifier, "Expect variable name.")?;
+        let initialiser = if self.matches(&[TokenType::Equal]) {
+            Some(self.expression()?)
+        } else {
+            None
+        };
+        self.consume(TokenType::Semicolon, "Expect ';' after variable declaration.")?;
+        Ok(Stmt::Var {
+            name,
+            initialiser,
+            slot: None,
+        })
     }
 
     fn statement(&mut self) -> Parsed<Stmt> {
