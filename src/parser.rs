@@ -306,8 +306,14 @@ impl Parser {
     }
 
     fn unary(&mut self) -> Parsed<Expr> {
-        // TODO(you): spec 3.2: unary operators are right-associative.
-        // TEMPORARY: lets the rules below run until you write this one.
+        if self.matches(&[TokenType::Bang, TokenType::Minus]) {
+            let op = self.previous();
+            let right = self.unary()?;
+            return Ok(Expr::Unary {
+                op,
+                right: Box::new(right),
+            });
+        }
         self.call()
     }
 
