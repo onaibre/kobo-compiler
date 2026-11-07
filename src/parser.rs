@@ -259,14 +259,36 @@ impl Parser {
     }
 
     fn comparison(&mut self) -> Parsed<Expr> {
-        // TODO(you): spec 3.2, one rung of the precedence ladder.
-        // TEMPORARY: lets the rules below run until you write this one.
-        self.term()
+        let mut expr = self.term()?;
+        while self.matches(&[
+            TokenType::Greater,
+            TokenType::GreaterEqual,
+            TokenType::Less,
+            TokenType::LessEqual,
+        ]) {
+            let op = self.previous();
+            let right = self.term()?;
+            expr = Expr::Binary {
+                left: Box::new(expr),
+                op,
+                right: Box::new(right),
+            };
+        }
+        Ok(expr)
     }
 
     fn term(&mut self) -> Parsed<Expr> {
-        // TODO(you): spec 3.2, one rung of the precedence ladder.
-        todo!("term")
+        let mut expr = self.factor()?;
+        while self.matches(&[TokenType::Minus, TokenType::Plus]) {
+            let op = self.previous();
+            let right = self.factor()?;
+            expr = Expr::Binary {
+                left: Box::new(expr),
+                op,
+                right: Box::new(right),
+            };
+        }
+        Ok(expr)
     }
 
     fn factor(&mut self) -> Parsed<Expr> {
