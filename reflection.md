@@ -1,31 +1,25 @@
-# CA2 Reflection
+# CA3 Reflection
 
-### 1. The dangling `else`
+## 1. Short-circuiting `and` and `or`
 
-In my `if_statement` function, the resolution of the dangling `else` happens at **`src/parser.rs:150`**, where the `then_branch` is parsed recursively by calling `self.statement()`. 
+`src/interpreter.rs` lines **134–156** are the `Expr::Logical` arm of `evaluate`. The `Or` case (around `src/interpreter.rs:137`) evaluates the left operand, and if it is truthy returns it **unchanged**; otherwise it evaluates and returns the right operand. The `And` case (`src/interpreter.rs:145`) evaluates the left operand, and if it is falsey returns it unchanged; otherwise it evaluates and returns the right operand. In both cases the value that comes back is **one of the operands**, never a coerced boolean.
 
-The grammar does not explicitly state which `if` an `else` belongs to; it only says `ifStmt → "if" "(" expression ")" statement ( "else" statement )?`. However, recursive descent handles this for free. When the parser sees the first `if`, it calls `self.statement()` for the body. If that body is another `if`, it recursively enters `if_statement` again. The inner `if` finishes parsing its own statement, then immediately checks for an `else`. If it finds one, it greedily consumes it. 
+For `nil or "fallback"`, `nil` is falsey (spec 2.1), so the `Or` arm evaluates the right operand and returns `"fallback"`. For `0 and 1`, `0` is truthy (only `nil` and `false` are falsey), so the `And` arm evaluates the right operand and returns `1`.
 
-For `if (false) if (true) print "a"; else print "b";`, my parser prints `(if false (if true (print a) (print b)))`. The `else` is captured by the inner `if`. If it bound to the outer `if` instead, it would print `(if false (if true (print a)) (print b))`. The recursion guarantees the `else` always matches the nearest unmatched `if`, resolving the ambiguity automatically.
+Returning `true`/`false` instead would pass tests that only check truthiness in a condition (`if (a or b) …`), because both engines coerce the operand at the branch anyway. It would fail the tests that print the result directly: `print nil or "fallback";` must print `fallback`, not `true`, and `print 0 and 1;` must print `1`, not `true`. The spec is explicit that the operators yield an operand, so the tree walk and the VM must both leave one on the stack.
 
-### 2. Assignment is not LL(1)
+## 2. `lookup` and `end_scope`
 
-In my `assignment` function, I check what the left side turned out to be at **`src/parser.rs:206`**, specifically the check `if let Expr::Variable { name, .. } = expr`. 
+`src/resolver.rs:76` is the innermost-first scan in `lookup`. It walks `self.locals` from the end and returns `Resolved::Local { depth, slot }` for the nearest initialised binding of the name, or `Resolved::Global` if none is found. `src/compiler.rs:230` is `end_scope`, which emits one `Op::Pop` per local that died in the block, using the count the resolver stored on the `Block` node.
 
-This check cannot happen before the left side is parsed because when the parser sees an identifier like `a`, it does not yet know if it is parsing a variable read (`a + 1`) or the start of an assignment (`a = 1`). The grammar rule `IDENTIFIER "=" assignment | logic_or` is not LL(1) because both alternatives begin with `IDENTIFIER`. To solve this, I parse the left side as an ordinary `or()` expression first, and only if the next token is `=` do I look back at what I just parsed. If it is a valid variable, I build an `Assign` node; otherwise, I emit an error. Because of this look-back, the input `1 = 2;` produces the exact message from section 5.1: `Cannot assign to this expression.`
+Resolving a name to a slot at compile time makes the VM faster than the tree walk because the tree walk must, at every variable read, search the `Environment`'s `Vec<HashMap>` from the innermost scope outward until it finds the name. That is O(depth) hash lookups per read. The VM does one array index, `stack[base + slot]`, with the slot fixed in the instruction at compile time. There is no search and no hashing at run time.
 
-### 3. Synchronisation
+If `end_scope` emits one `Pop` too few, the stack grows by one extra value on every loop iteration that declares a block-local. That extra value sits between `base` and the slots that `GetLocal`/`SetLocal` address, so every subsequent local read shifts by one. Phase 4 catches it — `locals_slots.kobo` and `jumps_while.kobo` both fail, because they exercise block locals inside loops. Phase 3 does not catch it, because the tree walk never uses slots: the resolver's depth is independent of the VM's stack height, so a missing `Pop` is invisible to the interpreter. That asymmetry is exactly what the brief warns about.
 
-My `synchronise` implementation is at **`src/parser.rs:387`**. After a parse error, it always discards at least one token to guarantee progress, then keeps discarding until it has just consumed a `;` or is positioned on one of the statement keywords: `fun`, `var`, `if`, `while`, `print`, or `return`. I stop on these keywords because they are the only tokens that can reliably begin a new statement, meaning the parser can safely resume there. I stop after a `;` because it marks a completed statement.
+## 3. The extension: `for` loops
 
-If I deleted the call to `synchronise()` in the main `parse` loop, the test `tests/phase-2/invalid/expect_function_name.kobo` would hang. Instead of discarding the bad token and moving on, the parser would get stuck in an infinite loop, repeatedly failing on the exact same token and eventually timing out the test runner (as I discovered during development). 
+My extension is `for` loops (row 0 of the matric table). I added a `TokenType::For` variant and its keyword mapping in `src/token.rs` (around `src/token.rs:41` and `src/token.rs:112` in my tree), and a `for_statement` method in `src/parser.rs` (around `src/parser.rs:280`) plus a `TokenType::For =>` arm in `statement` (`src/parser.rs:198`).
 
-**History anchor for Question 3:**
-The commit where `synchronise` was still wrong (lacking the guarantee of the first discard) was **`fc188c0`**. 
-The line stood as:
-```rust
-while !self.at_end() {
-    if !self.at_end() {
-    self.current += 1;
-}
-```
+The back end got the feature for free because `for_statement` **desugars** the loop into the statement nodes that already exist. It builds a `Stmt::Block` containing the initialiser and a `Stmt::While` whose body is a `Stmt::Block` of the original body followed by the increment. Both blocks carry `locals: 0`, which the resolver overwrites in `Stmt::Block`'s arm. Because the desugared tree contains only `Block`, `While`, `Expression`, and `Var`, the interpreter, the compiler, and the VM all handle it with the code they already had — I changed none of the three.
+
+Anchor in my own history: in commit **`57d645b`** ("update build fails"), the `for` arm was still the placeholder `Stmt::Expression(Expr::Literal { value: Value::Bool(true), line: 0 })` — the parser advanced past `for` but emitted a no-op, so `for (var i = 0; i < 3; i = i + 1) print i;` compiled and printed nothing. In commit **`3318240`** ("Fixed all bugs"), the arm reads `self.advance(); self.for_statement()` and `for_statement` builds the desugared `Block`/`While` tree shown above.
