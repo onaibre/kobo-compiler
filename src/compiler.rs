@@ -136,9 +136,88 @@ impl<'a> Compiler<'a> {
 
     /// Emit `expr`, and return the line for the caller's next instruction.
     fn expression(&mut self, expr: &Expr) -> usize {
-        // TODO(you): emit code for one expression, and return the line it came from.
-        todo!("expression")
+    match expr {
+        Expr::Literal { value, line } => {
+            let idx = self.chunk.constant(value.clone());
+            self.chunk.write(Op::Constant(idx), *line)
+        }
+        Expr::Grouping(inner) => self.expression(inner),
+        Expr::Variable { name, at, .. } => match at {
+            Resolved::Local { slot, .. } => self.chunk.write(Op::GetLocal(*slot), name.line),
+            Resolved::Global => {
+                let idx = self.name_constant(&name.lexeme);
+                self.chunk.write(Op::GetGlobal(idx), name.line)
+            }
+        },
+        Expr::Assign { name, value, at } => {
+            self.expression(value);
+            match at {
+                Resolved::Local { slot, .. } => self.chunk.write(Op::SetLocal(*slot), name.line),
+                Resolved::Global => {
+                    let idx = self.name_constant(&name.lexeme);
+                    self.chunk.write(Op::SetGlobal(idx), name.line)
+                }
+            }
+        }
+        Expr::Unary { operator, right, .. } => {
+            self.expression(right);
+            let op = match operator.token_type {
+                TokenType::Minus => Op::Negate,
+                TokenType::Bang => Op::Not,
+                _ => unreachable!(),
+            };
+            self.chunk.write(op, operator.line)
+        }
+        Expr::Binary { left, operator, right } => {
+            self.expression(left);
+            self.expression(right);
+            let op = match operator.token_type {
+                TokenType::Plus => Op::Add,
+                TokenType::Minus => Op::Subtract,
+                TokenType::Star => Op::Multiply,
+                TokenType::Slash => Op::Divide,
+                TokenType::EqualEqual => Op::Equal,
+                TokenType::BangEqual => Op::NotEqual,
+                TokenType::Greater => Op::Greater,
+                TokenType::GreaterEqual => Op::GreaterEqual,
+                TokenType::Less => Op::Less,
+                TokenType::LessEqual => Op::LessEqual,
+                _ => unreachable!(),
+            };
+            self.chunk.write(op, operator.line)
+        }
+        Expr::Logical { left, operator, right } => {
+            self.expression(left);
+            let line = operator.line;
+            match operator.token_type {
+                TokenType::Or => {
+                    // If left truthy, keep it and skip right.
+                    let jump = self.chunk.write(Op::JumpIfFalse(0), line); // fall through if falsey
+                    let end = self.chunk.write(Op::Jump(0), line); // truthy: skip right
+                    self.patch(jump);
+                    self.chunk.write(Op::Pop, line); // falsey: drop left, eval right
+                    self.expression(right);
+                    self.patch(end);
+                }
+                TokenType::And => {
+                    // If left falsey, keep it and skip right.
+                    let end = self.chunk.write(Op::JumpIfFalse(0), line); // falsey: jump to end
+                    self.chunk.write(Op::Pop, line); // truthy: drop left, eval right
+                    self.expression(right);
+                    self.patch(end);
+                }
+                _ => unreachable!(),
+            }
+        }
+        Expr::Call { callee, args, paren } => {
+            self.expression(callee);
+            for a in args {
+                self.expression(a);
+            }
+            self.chunk.write(Op::Call(args.len()), paren.line)
+        }
     }
+}
 
     // --- names ------------------------------------------------------------------------
 
