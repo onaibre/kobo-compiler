@@ -246,20 +246,4 @@ fn patch(&mut self, at: usize) {
         _ => panic!("patch called on a non-jump"),
     }
 }
-
-    fn name_constant(&mut self, name: &str) -> usize {
-        self.chunk.constant(Value::Str(name.to_string()))
-    }
-
-    /// Leaving a scope pops its locals, one `Pop` each; the count is on the `Block`.
-    fn end_scope(&mut self, locals: usize) {
-        // TODO(you): leave a scope: one Pop per local that dies here, and the resolver already
-        //            counted them onto the Block.
-        todo!("end_scope")
-    }
-
-    fn patch(&mut self, at: usize) {
-        // TODO(you): fill in a forward jump, whose target was not known when it was emitted.
-        todo!("patch")
-    }
 }
