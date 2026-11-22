@@ -36,8 +36,63 @@ pub fn interpret(program: &Program) -> Result<(), RuntimeError> {
 }
 
 fn execute(stmt: &Stmt, env: &mut Environment, program: &Program) -> Exec<()> {
-    // TODO(you): spec 4: run one statement.
-    todo!("execute")
+    match stmt {
+        Stmt::Expression(e) => { evaluate(e, env, program)?; Ok(()) }
+        Stmt::Print(e) => {
+            let v = evaluate(e, env, program)?;
+            println!("{}", v);
+            Ok(())
+        }
+        Stmt::Var { name, initialiser, .. } => {
+            let v = match initialiser {
+                Some(e) => evaluate(e, env, program)?,
+                None => Value::Nil,
+            };
+            env.declare(&name.lexeme, v);
+            Ok(())
+        }
+        Stmt::Block { body, .. } => {
+            env.push_scope();
+            let result = (|| {
+                for s in body {
+                    execute(s, env, program)?;
+                }
+                Ok(())
+            })();
+            env.pop_scope();
+            result
+        }
+        Stmt::If { condition, then_branch, else_branch } => {
+            let c = evaluate(condition, env, program)?;
+            if c.is_truthy() {
+                execute(then_branch, env, program)
+            } else if let Some(alt) = else_branch {
+                execute(alt, env, program)
+            } else {
+                Ok(())
+            }
+        }
+        Stmt::While { condition, body } => {
+            while evaluate(condition, env, program)?.is_truthy() {
+                execute(body, env, program)?;
+            }
+            Ok(())
+        }
+        Stmt::Function { name, .. } => {
+            // Function values are indexed; store the index as a Value.
+            let index = program.functions.iter().position(|f| f.name == name.lexeme)
+                .expect("resolver/parser kept function order");
+            env.declare(&name.lexeme, Value::Function(index));
+            Ok(())
+        }
+        Stmt::Return(value) => {
+            let v = match value {
+                Some(e) => evaluate(e, env, program)?,
+                None => Value::Nil,
+            };
+            Err(Flow::Return(v))
+        }
+    }
 }
 
 fn evaluate(expr: &Expr, env: &mut Environment, program: &Program) -> Exec<Value> {
