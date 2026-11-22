@@ -3,15 +3,11 @@ use crate::chunk::{Bytecode, Chunk, Op};
 use crate::token::TokenType;
 use crate::value::Value;
 
-/// AST to bytecode in one pass. Local slots come from `resolver.rs`, which has already
-/// written them into the tree.
 pub fn compile(program: &Program) -> Bytecode {
     let functions = program
         .functions
         .iter()
         .map(|f| {
-            // Parameters are the frame's first locals, so argument `i` is already in
-            // slot `i` when the body starts.
             let mut c = Compiler::new(Chunk::new(f.name.clone(), f.params.len()), program);
             c.in_function = true;
             c.statements(&f.body);
@@ -31,8 +27,6 @@ pub fn compile(program: &Program) -> Bytecode {
 struct Compiler<'a> {
     chunk: Chunk,
     program: &'a Program,
-    /// A function body's declarations are locals even at its outermost level; the
-    /// script's are globals.
     in_function: bool,
 }
 
@@ -45,8 +39,6 @@ impl<'a> Compiler<'a> {
         }
     }
 
-    /// Every chunk ends by returning `nil`, so falling off the end of a function returns
-    /// `nil` (spec section 4.3).
     fn finish(mut self, line: usize) -> Chunk {
         self.chunk.write(Op::Nil, line);
         self.chunk.write(Op::Return, line);
@@ -58,8 +50,6 @@ impl<'a> Compiler<'a> {
             self.statement(stmt);
         }
     }
-
-    // --- statements -------------------------------------------------------------------
 
     fn statement(&mut self, stmt: &Stmt) {
         match stmt {
@@ -93,28 +83,33 @@ impl<'a> Compiler<'a> {
                 self.end_scope(*locals);
             }
             Stmt::If {
-                condition,
-                then_branch,
-                else_branch,
-            } => {
-                let line = self.expression(condition);
-                let jump_if_false = self.chunk.write(Op::JumpIfFalse(0), line);
-                self.chunk.write(Op::Pop, line);
-                self.statement(then_branch);
-                match else_branch {
-                    Some(alt) => {
-                        let jump_over = self.chunk.write(Op::Jump(0), line);
-                        self.patch(jump_if_false);
-                        self.chunk.write(Op::Pop, line);
-                        self.statement(alt);
-                        self.patch(jump_over);
-                    }
-                    None => {
-                        self.patch(jump_if_false);
-                        self.chunk.write(Op::Pop, line);
-                    }
-                }
-            }
+    condition,
+    then_branch,
+    else_branch,
+} => {
+    let line = self.expression(condition);
+    let jump_if_false = self.chunk.write(Op::JumpIfFalse(0), line);
+    self.chunk.write(Op::Pop, line);
+    self.statement(then_branch);
+    match else_branch {
+        Some(alt) => {
+            let jump_over = self.chunk.write(Op::Jump(0), line);
+            self.patch(jump_if_false);
+            self.chunk.write(Op::Pop, line);
+            self.statement(alt);
+            self.patch(jump_over);
+        }
+        None => {
+            // The true path must skip the false-path Pop. Without this Jump, a
+            // nested `if` in the then-branch can fall into the false Pop with an
+            // empty stack (e.g. `if (true) if (false) ...; else ...;`).
+            let jump_over = self.chunk.write(Op::Jump(0), line);
+            self.patch(jump_if_false);
+            self.chunk.write(Op::Pop, line);
+            self.patch(jump_over);
+        }
+    }
+}
             Stmt::While { condition, body } => {
                 let loop_start = self.chunk.code.len();
                 let line = self.expression(condition);
@@ -156,9 +151,6 @@ impl<'a> Compiler<'a> {
         }
     }
 
-    // --- expressions ------------------------------------------------------------------
-
-    /// Emit `expr`, and return the line for the caller's next instruction.
     fn expression(&mut self, expr: &Expr) -> usize {
         match expr {
             Expr::Literal { value, line } => {
@@ -245,10 +237,6 @@ impl<'a> Compiler<'a> {
         }
     }
 
-    // --- names ------------------------------------------------------------------------
-
-    /// A global is written into the globals map. A local is already on the stack in the
-    /// slot the resolver gave it, so declaring one emits nothing.
     fn declare(&mut self, name: &str, slot: Option<usize>, line: usize) {
         match slot {
             Some(_) => {}
@@ -263,7 +251,6 @@ impl<'a> Compiler<'a> {
         self.chunk.constant(Value::Str(name.to_string()))
     }
 
-    /// Leaving a scope pops its locals, one `Pop` each; the count is on the `Block`.
     fn end_scope(&mut self, locals: usize) {
         for _ in 0..locals {
             let line = self.chunk.last_line();

@@ -1,21 +1,15 @@
 use std::collections::HashMap;
 
 use crate::chunk::{Bytecode, Chunk, Op};
-// Shared with the tree-walker: both engines must print the same thing (spec section 6.1).
 use crate::interpreter::{RuntimeError, MAX_FRAMES};
 use crate::value::Value;
 
-/// One active call: its chunk, how far through it is, and where its slice of the stack
-/// begins. Nothing else, because Kobo has no closures.
 struct Frame {
-    /// An index into `Bytecode::functions`, or `None` for the script itself.
     function: Option<usize>,
     ip: usize,
-    /// Stack index of local slot 0. The callee's own value sits just below it.
     base: usize,
 }
 
-/// Run compiled bytecode. The VM takes ownership; nothing needs the chunks afterwards.
 pub fn run(bytecode: Bytecode) -> Result<(), RuntimeError> {
     let mut vm = Vm {
         bytecode,
@@ -32,7 +26,6 @@ pub fn run(bytecode: Bytecode) -> Result<(), RuntimeError> {
 
 struct Vm {
     bytecode: Bytecode,
-    /// Values in flight and the locals of every active call, in one vector.
     stack: Vec<Value>,
     globals: HashMap<String, Value>,
     frames: Vec<Frame>,
@@ -45,6 +38,18 @@ impl Vm {
             let function = frame.function;
             let ip = frame.ip;
             let base = frame.base;
+
+            if ip >= self.chunk(function).code.len() {
+                return Err(error(
+                    0,
+                    &format!(
+                        "internal: ip {} out of bounds (len {})",
+                        ip,
+                        self.chunk(function).code.len()
+                    ),
+                ));
+            }
+
             let op = self.chunk(function).code[ip];
             let line = self.chunk(function).lines[ip];
             self.frame_mut().ip += 1;
@@ -60,7 +65,6 @@ impl Vm {
                 Op::Pop => {
                     self.pop();
                 }
-
                 Op::DefineGlobal(i) => {
                     let name = self.name(function, i);
                     let v = self.pop();
@@ -84,21 +88,21 @@ impl Vm {
                     }
                 }
                 Op::GetLocal(i) => {
-                    let v = self.stack[base + i].clone();
+                    let addr = base + i;
+                    let v = self.stack[addr].clone();
                     self.stack.push(v);
                 }
                 Op::SetLocal(i) => {
+                    let addr = base + i;
                     let v = self.peek().clone();
-                    self.stack[base + i] = v;
+                    self.stack[addr] = v;
                 }
-
                 Op::Equal => self.binary_value(|a, b| Value::Bool(equal_values(&a, &b))),
                 Op::NotEqual => self.binary_value(|a, b| Value::Bool(!equal_values(&a, &b))),
                 Op::Greater => self.compare(line, |a, b| a > b)?,
                 Op::GreaterEqual => self.compare(line, |a, b| a >= b)?,
                 Op::Less => self.compare(line, |a, b| a < b)?,
                 Op::LessEqual => self.compare(line, |a, b| a <= b)?,
-
                 Op::Add => {
                     let (a, b) = self.pop_two();
                     match (a, b) {
@@ -138,7 +142,6 @@ impl Vm {
                     let v = self.pop();
                     println!("{}", v);
                 }
-
                 Op::Jump(t) => {
                     self.frame_mut().ip = t;
                 }
@@ -146,18 +149,18 @@ impl Vm {
                     if !self.peek().is_truthy() {
                         self.frame_mut().ip = t;
                     }
-                    // Leaves the value on the stack: `and`/`or` need it (spec section 4.1).
                 }
                 Op::Call(argc) => self.call(argc, line)?,
                 Op::Return => {
                     let result = self.pop();
                     let base = self.frame().base;
-                    // Truncate back to the callee: everything from base-1 (the callee
-                    // itself) upward goes, then push the result in its place.
-                    self.stack.truncate(base - 1);
                     self.frames.pop();
+                    if base == 0 {
+                        self.stack.clear();
+                    } else {
+                        self.stack.truncate(base - 1);
+                    }
                     self.stack.push(result);
-                    // If the script's frame returns, the program ends.
                     if self.frames.is_empty() {
                         return Ok(());
                     }
@@ -166,14 +169,11 @@ impl Vm {
         }
     }
 
-    /// The callee sits under its arguments, and the arguments are already where the new
-    /// frame's slots need them. Nothing is moved.
     fn call(&mut self, argc: usize, line: usize) -> Result<(), RuntimeError> {
-        // Stack layout at entry: [..., callee, arg0, ..., arg{argc-1}]
         let callee_idx = self.stack.len() - argc - 1;
         let function = match &self.stack[callee_idx] {
             Value::Function { index, .. } => *index,
-            _ => return Err(error(line, "Can only call functions.")),
+            _ => return Err(error(line, "This value is not a function.")),
         };
         let arity = self.bytecode.functions[function].arity;
         if argc != arity {
@@ -182,10 +182,9 @@ impl Vm {
                 &format!("Expected {} arguments but got {}.", arity, argc),
             ));
         }
-        if self.frames.len() >= MAX_FRAMES {
+        if self.frames.len() - 1 >= MAX_FRAMES {
             return Err(error(line, "Stack overflow."));
         }
-        // Slot 0 (arg0) lives just above the callee.
         let base = callee_idx + 1;
         self.frames.push(Frame {
             function: Some(function),
@@ -194,8 +193,6 @@ impl Vm {
         });
         Ok(())
     }
-
-    // --- primitives -------------------------------------------------------------------
 
     fn chunk(&self, function: Option<usize>) -> &Chunk {
         match function {

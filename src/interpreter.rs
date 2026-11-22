@@ -8,8 +8,6 @@ pub struct RuntimeError {
     pub message: String,
 }
 
-/// Why a statement stopped early: a runtime error unwinding to `main`, or a `return`
-/// unwinding to its call.
 enum Flow {
     Error(RuntimeError),
     Return(Value),
@@ -17,9 +15,6 @@ enum Flow {
 
 type Exec<T> = Result<T, Flow>;
 
-/// Kobo's call stack is Rust's, and overflowing it aborts with no message, so calls are
-/// capped (spec section 5.1). The measured limit here is near 1,500; 500 leaves room for
-/// a deeply nested expression inside every frame.
 pub const MAX_FRAMES: usize = 500;
 
 pub fn interpret(program: &Program) -> Result<(), RuntimeError> {
@@ -27,7 +22,6 @@ pub fn interpret(program: &Program) -> Result<(), RuntimeError> {
     for stmt in &program.stmts {
         match execute(stmt, &mut env, program) {
             Ok(()) => {}
-            // `return` outside any function ends the program (spec section 3.1).
             Err(Flow::Return(_)) => return Ok(()),
             Err(Flow::Error(e)) => return Err(e),
         }
@@ -92,7 +86,7 @@ fn execute(stmt: &Stmt, env: &mut Environment, program: &Program) -> Exec<()> {
                 .functions
                 .iter()
                 .position(|f| f.name == *name)
-                .expect("parser preserved function order");
+                .ok_or_else(|| err(1, "internal: function not found"))?;
             let value = Value::Function {
                 index,
                 name: name.clone(),
@@ -113,9 +107,7 @@ fn execute(stmt: &Stmt, env: &mut Environment, program: &Program) -> Exec<()> {
 fn evaluate(expr: &Expr, env: &mut Environment, program: &Program) -> Exec<Value> {
     match expr {
         Expr::Literal { value, .. } => Ok(value.clone()),
-
         Expr::Grouping(inner) => evaluate(inner, env, program),
-
         Expr::Variable { name, at } => match at {
             Resolved::Local { depth, .. } => env
                 .get_at(*depth, &name.lexeme)
@@ -126,7 +118,6 @@ fn evaluate(expr: &Expr, env: &mut Environment, program: &Program) -> Exec<Value
                 .cloned()
                 .ok_or_else(|| undefined(name)),
         },
-
         Expr::Assign { name, value, at } => {
             let v = evaluate(value, env, program)?;
             let ok = match at {
@@ -139,7 +130,6 @@ fn evaluate(expr: &Expr, env: &mut Environment, program: &Program) -> Exec<Value
                 Err(undefined(name))
             }
         }
-
         Expr::Unary { op, right, .. } => {
             let v = evaluate(right, env, program)?;
             match op.kind {
@@ -151,7 +141,6 @@ fn evaluate(expr: &Expr, env: &mut Environment, program: &Program) -> Exec<Value
                 _ => unreachable!(),
             }
         }
-
         Expr::Binary { left, op, right } => {
             let l = evaluate(left, env, program)?;
             let r = evaluate(right, env, program)?;
@@ -180,7 +169,6 @@ fn evaluate(expr: &Expr, env: &mut Environment, program: &Program) -> Exec<Value
                 _ => unreachable!(),
             }
         }
-
         Expr::Logical { left, op, right } => {
             let l = evaluate(left, env, program)?;
             match op.kind {
@@ -201,7 +189,6 @@ fn evaluate(expr: &Expr, env: &mut Environment, program: &Program) -> Exec<Value
                 _ => unreachable!(),
             }
         }
-
         Expr::Call { callee, args, paren } => {
             let callee = evaluate(callee, env, program)?;
             let mut argv = Vec::with_capacity(args.len());
@@ -210,7 +197,7 @@ fn evaluate(expr: &Expr, env: &mut Environment, program: &Program) -> Exec<Value
             }
             match callee {
                 Value::Function { index, .. } => call(index, argv, paren.line, env, program),
-                _ => Err(err(paren.line, "Can only call functions.")),
+                _ => Err(err(paren.line, "This value is not a function.")),
             }
         }
     }
