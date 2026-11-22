@@ -4,10 +4,19 @@ use crate::ast::{Expr, Function, Program, Resolved, Stmt};
 /// a depth for the interpreter, a stack slot for the VM. A name that matches no local is a
 /// global, and globals stay unresolved.
 pub fn resolve(program: &mut Program) {
-    // TODO(you): spec 7, 'The resolver': walk every function body in its own frame (4.3), then
-    //            the script. A function's body sees its own scopes and the globals and nothing
-    //            between.
-    todo!("resolve")
+    // Each function body is its own frame: a fresh Resolver, depth 0.
+    for f in program.functions.iter_mut() {
+        let mut r = Resolver::default();
+        r.depth = 1; // parameters live in the frame's own scope
+        for p in &f.params {
+            r.declare(&p.lexeme);
+            r.define(&p.lexeme);
+        }
+        r.statements(&mut f.body);
+    }
+    // Then the script, whose outermost level is globals.
+    let mut r = Resolver::default();
+    r.statements(&mut program.stmts);
 }
 
 struct Local {
