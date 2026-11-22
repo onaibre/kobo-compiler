@@ -4,13 +4,12 @@ use crate::ast::{Expr, Function, Program, Resolved, Stmt};
 /// a depth for the interpreter, a stack slot for the VM. A name that matches no local is a
 /// global, and globals stay unresolved.
 pub fn resolve(program: &mut Program) {
-    // Each function body is its own frame: a fresh Resolver, depth 0.
+    // Each function body is its own frame: a fresh Resolver, depth 0, params in slot order.
     for f in program.functions.iter_mut() {
         let mut r = Resolver::default();
-        r.depth = 1; // parameters live in the frame's own scope
         for p in &f.params {
-            r.declare(&p.lexeme);
-            r.define(&p.lexeme);
+            r.declare(p);
+            r.define(p);
         }
         r.statements(&mut f.body);
     }
@@ -62,7 +61,6 @@ impl Resolver {
 
     /// `None` at the top level of the script, where a declaration is a global.
     fn define(&mut self, name: &str) -> Option<usize> {
-        // A top-level script declaration is a global: no slot.
         if self.depth == 0 {
             return None;
         }

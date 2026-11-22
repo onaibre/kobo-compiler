@@ -40,146 +40,161 @@ struct Vm {
 
 impl Vm {
     fn run(&mut self) -> Result<(), RuntimeError> {
-    loop {
-        let frame = self.frame();
-        let function = frame.function;
-        let ip = frame.ip;
-        let base = frame.base;
-        let op = self.chunk(function).code[ip];
-        let line = self.chunk(function).lines[ip];
-        self.frame_mut().ip += 1;
+        loop {
+            let frame = self.frame();
+            let function = frame.function;
+            let ip = frame.ip;
+            let base = frame.base;
+            let op = self.chunk(function).code[ip];
+            let line = self.chunk(function).lines[ip];
+            self.frame_mut().ip += 1;
 
-        match op {
-            Op::Constant(i) => {
-                let v = self.chunk(function).constants[i].clone();
-                self.stack.push(v);
-            }
-            Op::Nil => self.stack.push(Value::Nil),
-            Op::True => self.stack.push(Value::Bool(true)),
-            Op::False => self.stack.push(Value::Bool(false)),
-            Op::Pop => { self.pop(); }
-
-            Op::DefineGlobal(i) => {
-                let name = self.name(function, i);
-                let v = self.pop();
-                self.globals.insert(name, v);
-            }
-            Op::GetGlobal(i) => {
-                let name = self.name(function, i);
-                match self.globals.get(&name) {
-                    Some(v) => self.stack.push(v.clone()),
-                    None => return Err(undefined(line, &name)),
+            match op {
+                Op::Constant(i) => {
+                    let v = self.chunk(function).constants[i].clone();
+                    self.stack.push(v);
                 }
-            }
-            Op::SetGlobal(i) => {
-                let name = self.name(function, i);
-                let v = self.peek().clone(); // assignment is an expression: leave it
-                match self.globals.get_mut(&name) {
-                    Some(slot) => { *slot = v; }
-                    None => return Err(undefined(line, &name)),
+                Op::Nil => self.stack.push(Value::Nil),
+                Op::True => self.stack.push(Value::Bool(true)),
+                Op::False => self.stack.push(Value::Bool(false)),
+                Op::Pop => {
+                    self.pop();
                 }
-            }
-            Op::GetLocal(i) => {
-                let v = self.stack[base + i].clone();
-                self.stack.push(v);
-            }
-            Op::SetLocal(i) => {
-                let v = self.peek().clone();
-                self.stack[base + i] = v;
-            }
 
-            Op::Equal => self.binary_value(|a, b| Value::Bool(equal_values(&a, &b))),
-            Op::NotEqual => self.binary_value(|a, b| Value::Bool(!equal_values(&a, &b))),
-            Op::Greater => self.compare(line, |a, b| a > b)?,
-            Op::GreaterEqual => self.compare(line, |a, b| a >= b)?,
-            Op::Less => self.compare(line, |a, b| a < b)?,
-            Op::LessEqual => self.compare(line, |a, b| a <= b)?,
-
-            Op::Add => {
-                let (a, b) = self.pop_two();
-                match (a, b) {
-                    (Value::Number(x), Value::Number(y)) => self.stack.push(Value::Number(x + y)),
-                    (Value::Str(x), Value::Str(y)) => self.stack.push(Value::Str(x + &y)),
-                    _ => return Err(error(line, "Operands must be two numbers or two strings.")),
+                Op::DefineGlobal(i) => {
+                    let name = self.name(function, i);
+                    let v = self.pop();
+                    self.globals.insert(name, v);
                 }
-            }
-            Op::Subtract => self.arith(line, |a, b| a - b)?,
-            Op::Multiply => self.arith(line, |a, b| a * b)?,
-            Op::Divide => {
-                let (a, b) = self.numbers(line)?;
-                if b == 0.0 { return Err(error(line, "Division by zero.")); }
-                self.stack.push(Value::Number(a / b));
-            }
-            Op::Not => {
-                let v = self.pop();
-                self.stack.push(Value::Bool(!v.is_truthy()));
-            }
-            Op::Negate => {
-                let v = self.pop();
-                match v {
-                    Value::Number(n) => self.stack.push(Value::Number(-n)),
-                    _ => return Err(error(line, "Operand must be a number.")),
+                Op::GetGlobal(i) => {
+                    let name = self.name(function, i);
+                    match self.globals.get(&name) {
+                        Some(v) => self.stack.push(v.clone()),
+                        None => return Err(undefined(line, &name)),
+                    }
                 }
-            }
-            Op::Print => {
-                let v = self.pop();
-                println!("{}", v);
-            }
+                Op::SetGlobal(i) => {
+                    let name = self.name(function, i);
+                    let v = self.peek().clone();
+                    match self.globals.get_mut(&name) {
+                        Some(slot) => {
+                            *slot = v;
+                        }
+                        None => return Err(undefined(line, &name)),
+                    }
+                }
+                Op::GetLocal(i) => {
+                    let v = self.stack[base + i].clone();
+                    self.stack.push(v);
+                }
+                Op::SetLocal(i) => {
+                    let v = self.peek().clone();
+                    self.stack[base + i] = v;
+                }
 
-            Op::Jump(t) => { self.frame_mut().ip = t; }
-            Op::JumpIfFalse(t) => {
-                if !self.peek().is_truthy() {
+                Op::Equal => self.binary_value(|a, b| Value::Bool(equal_values(&a, &b))),
+                Op::NotEqual => self.binary_value(|a, b| Value::Bool(!equal_values(&a, &b))),
+                Op::Greater => self.compare(line, |a, b| a > b)?,
+                Op::GreaterEqual => self.compare(line, |a, b| a >= b)?,
+                Op::Less => self.compare(line, |a, b| a < b)?,
+                Op::LessEqual => self.compare(line, |a, b| a <= b)?,
+
+                Op::Add => {
+                    let (a, b) = self.pop_two();
+                    match (a, b) {
+                        (Value::Number(x), Value::Number(y)) => {
+                            self.stack.push(Value::Number(x + y))
+                        }
+                        (Value::Str(x), Value::Str(y)) => self.stack.push(Value::Str(x + &y)),
+                        _ => {
+                            return Err(error(
+                                line,
+                                "Operands must be two numbers or two strings.",
+                            ))
+                        }
+                    }
+                }
+                Op::Subtract => self.arith(line, |a, b| a - b)?,
+                Op::Multiply => self.arith(line, |a, b| a * b)?,
+                Op::Divide => {
+                    let (a, b) = self.numbers(line)?;
+                    if b == 0.0 {
+                        return Err(error(line, "Division by zero."));
+                    }
+                    self.stack.push(Value::Number(a / b));
+                }
+                Op::Not => {
+                    let v = self.pop();
+                    self.stack.push(Value::Bool(!v.is_truthy()));
+                }
+                Op::Negate => {
+                    let v = self.pop();
+                    match v {
+                        Value::Number(n) => self.stack.push(Value::Number(-n)),
+                        _ => return Err(error(line, "Operand must be a number.")),
+                    }
+                }
+                Op::Print => {
+                    let v = self.pop();
+                    println!("{}", v);
+                }
+
+                Op::Jump(t) => {
                     self.frame_mut().ip = t;
                 }
-                // leaves the value: `and`/`or` need it
-            }
-            Op::Call(argc) => self.call(argc, line)?,
-            Op::Return => {
-                let result = self.pop();
-                let base = self.frame().base;
-                let function = self.frame().function;
-                // Truncate the frame: everything from the callee down (base - 1).
-                self.stack.truncate(base - 1);
-                self.frames.pop();
-                self.stack.push(result);
-                // If the script's frame returns, the program ends.
-                if self.frames.is_empty() {
-                    return Ok(());
+                Op::JumpIfFalse(t) => {
+                    if !self.peek().is_truthy() {
+                        self.frame_mut().ip = t;
+                    }
+                    // Leaves the value on the stack: `and`/`or` need it (spec section 4.1).
                 }
-                let _ = function;
+                Op::Call(argc) => self.call(argc, line)?,
+                Op::Return => {
+                    let result = self.pop();
+                    let base = self.frame().base;
+                    // Truncate back to the callee: everything from base-1 (the callee
+                    // itself) upward goes, then push the result in its place.
+                    self.stack.truncate(base - 1);
+                    self.frames.pop();
+                    self.stack.push(result);
+                    // If the script's frame returns, the program ends.
+                    if self.frames.is_empty() {
+                        return Ok(());
+                    }
+                }
             }
         }
     }
-}
 
     /// The callee sits under its arguments, and the arguments are already where the new
     /// frame's slots need them. Nothing is moved.
     fn call(&mut self, argc: usize, line: usize) -> Result<(), RuntimeError> {
-    // Stack layout: [..., callee, arg0, ..., arg{argc-1}]
-    let callee_idx = self.stack.len() - argc - 1;
-    let function = match &self.stack[callee_idx] {
-        Value::Function(i) => *i,
-        _ => return Err(error(line, "Can only call functions.")),
-    };
-    let arity = self.bytecode.functions[function].arity;
-    if argc != arity {
-        return Err(error(
-            line,
-            &format!("Expected {} arguments but got {}.", arity, argc),
-        ));
+        // Stack layout at entry: [..., callee, arg0, ..., arg{argc-1}]
+        let callee_idx = self.stack.len() - argc - 1;
+        let function = match &self.stack[callee_idx] {
+            Value::Function { index, .. } => *index,
+            _ => return Err(error(line, "Can only call functions.")),
+        };
+        let arity = self.bytecode.functions[function].arity;
+        if argc != arity {
+            return Err(error(
+                line,
+                &format!("Expected {} arguments but got {}.", arity, argc),
+            ));
+        }
+        if self.frames.len() >= MAX_FRAMES {
+            return Err(error(line, "Stack overflow."));
+        }
+        // Slot 0 (arg0) lives just above the callee.
+        let base = callee_idx + 1;
+        self.frames.push(Frame {
+            function: Some(function),
+            ip: 0,
+            base,
+        });
+        Ok(())
     }
-    if self.frames.len() >= MAX_FRAMES {
-        return Err(error(line, "Stack overflow."));
-    }
-    // base is where slot 0 (arg0) lives: just above the callee.
-    let base = callee_idx + 1;
-    self.frames.push(Frame {
-        function: Some(function),
-        ip: 0,
-        base,
-    });
-    Ok(())
-}
+
     // --- primitives -------------------------------------------------------------------
 
     fn chunk(&self, function: Option<usize>) -> &Chunk {
@@ -237,6 +252,18 @@ impl Vm {
         let (a, b) = self.numbers(line)?;
         self.stack.push(Value::Bool(f(a, b)));
         Ok(())
+    }
+}
+
+fn equal_values(a: &Value, b: &Value) -> bool {
+    match (a, b) {
+        (Value::Nil, Value::Nil) => true,
+        (Value::Nil, _) | (_, Value::Nil) => false,
+        (Value::Bool(x), Value::Bool(y)) => x == y,
+        (Value::Number(x), Value::Number(y)) => x == y,
+        (Value::Str(x), Value::Str(y)) => x == y,
+        (Value::Function { index: x, .. }, Value::Function { index: y, .. }) => x == y,
+        _ => false,
     }
 }
 

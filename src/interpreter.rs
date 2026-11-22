@@ -37,13 +37,18 @@ pub fn interpret(program: &Program) -> Result<(), RuntimeError> {
 
 fn execute(stmt: &Stmt, env: &mut Environment, program: &Program) -> Exec<()> {
     match stmt {
-        Stmt::Expression(e) => { evaluate(e, env, program)?; Ok(()) }
+        Stmt::Expression(e) => {
+            evaluate(e, env, program)?;
+            Ok(())
+        }
         Stmt::Print(e) => {
             let v = evaluate(e, env, program)?;
             println!("{}", v);
             Ok(())
         }
-        Stmt::Var { name, initialiser, .. } => {
+        Stmt::Var {
+            name, initialiser, ..
+        } => {
             let v = match initialiser {
                 Some(e) => evaluate(e, env, program)?,
                 None => Value::Nil,
@@ -62,7 +67,11 @@ fn execute(stmt: &Stmt, env: &mut Environment, program: &Program) -> Exec<()> {
             env.pop_scope();
             result
         }
-        Stmt::If { condition, then_branch, else_branch } => {
+        Stmt::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
             let c = evaluate(condition, env, program)?;
             if c.is_truthy() {
                 execute(then_branch, env, program)
@@ -79,10 +88,16 @@ fn execute(stmt: &Stmt, env: &mut Environment, program: &Program) -> Exec<()> {
             Ok(())
         }
         Stmt::Function { name, .. } => {
-            // Function values are indexed; store the index as a Value.
-            let index = program.functions.iter().position(|f| f.name == name.lexeme)
-                .expect("resolver/parser kept function order");
-            env.declare(&name.lexeme, Value::Function(index));
+            let index = program
+                .functions
+                .iter()
+                .position(|f| f.name == *name)
+                .expect("parser preserved function order");
+            let value = Value::Function {
+                index,
+                name: name.clone(),
+            };
+            env.declare(name, value);
             Ok(())
         }
         Stmt::Return(value) => {
@@ -102,11 +117,10 @@ fn evaluate(expr: &Expr, env: &mut Environment, program: &Program) -> Exec<Value
         Expr::Grouping(inner) => evaluate(inner, env, program),
 
         Expr::Variable { name, at } => match at {
-            Resolved::Local { depth, .. } => {
-                env.get_at(*depth, &name.lexeme)
-                    .cloned()
-                    .ok_or_else(|| undefined(name))
-            }
+            Resolved::Local { depth, .. } => env
+                .get_at(*depth, &name.lexeme)
+                .cloned()
+                .ok_or_else(|| undefined(name)),
             Resolved::Global => env
                 .get_global(&name.lexeme)
                 .cloned()
@@ -119,26 +133,30 @@ fn evaluate(expr: &Expr, env: &mut Environment, program: &Program) -> Exec<Value
                 Resolved::Local { depth, .. } => env.assign_at(*depth, &name.lexeme, v.clone()),
                 Resolved::Global => env.assign_global(&name.lexeme, v.clone()),
             };
-            if ok { Ok(v) } else { Err(undefined(name)) }
+            if ok {
+                Ok(v)
+            } else {
+                Err(undefined(name))
+            }
         }
 
-        Expr::Unary { operator, right, .. } => {
+        Expr::Unary { op, right, .. } => {
             let v = evaluate(right, env, program)?;
-            match operator.token_type {
+            match op.token_type {
                 TokenType::Minus => match v {
                     Value::Number(n) => Ok(Value::Number(-n)),
-                    _ => Err(err(operator.line, "Operand must be a number.")),
+                    _ => Err(err(op.line, "Operand must be a number.")),
                 },
                 TokenType::Bang => Ok(Value::Bool(!v.is_truthy())),
                 _ => unreachable!(),
             }
         }
 
-        Expr::Binary { left, operator, right } => {
+        Expr::Binary { left, op, right } => {
             let l = evaluate(left, env, program)?;
             let r = evaluate(right, env, program)?;
-            let line = operator.line;
-            match operator.token_type {
+            let line = op.line;
+            match op.token_type {
                 TokenType::Plus => match (l, r) {
                     (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a + b)),
                     (Value::Str(a), Value::Str(b)) => Ok(Value::Str(a + &b)),
@@ -148,7 +166,9 @@ fn evaluate(expr: &Expr, env: &mut Environment, program: &Program) -> Exec<Value
                 TokenType::Star => arith(l, r, line, |a, b| a * b),
                 TokenType::Slash => {
                     let (a, b) = numbers(l, r, line)?;
-                    if b == 0.0 { return Err(err(line, "Division by zero.")); }
+                    if b == 0.0 {
+                        return Err(err(line, "Division by zero."));
+                    }
                     Ok(Value::Number(a / b))
                 }
                 TokenType::EqualEqual => Ok(Value::Bool(equal(&l, &r))),
@@ -161,14 +181,22 @@ fn evaluate(expr: &Expr, env: &mut Environment, program: &Program) -> Exec<Value
             }
         }
 
-        Expr::Logical { left, operator, right } => {
+        Expr::Logical { left, op, right } => {
             let l = evaluate(left, env, program)?;
-            match operator.token_type {
+            match op.token_type {
                 TokenType::Or => {
-                    if l.is_truthy() { Ok(l) } else { evaluate(right, env, program) }
+                    if l.is_truthy() {
+                        Ok(l)
+                    } else {
+                        evaluate(right, env, program)
+                    }
                 }
                 TokenType::And => {
-                    if !l.is_truthy() { Ok(l) } else { evaluate(right, env, program) }
+                    if !l.is_truthy() {
+                        Ok(l)
+                    } else {
+                        evaluate(right, env, program)
+                    }
                 }
                 _ => unreachable!(),
             }
@@ -181,27 +209,13 @@ fn evaluate(expr: &Expr, env: &mut Environment, program: &Program) -> Exec<Value
                 argv.push(evaluate(a, env, program)?);
             }
             match callee {
-                Value::Function(index) => call(index, argv, paren.line, env, program),
+                Value::Function { index, .. } => call(index, argv, paren.line, env, program),
                 _ => Err(err(paren.line, "Can only call functions.")),
             }
         }
     }
 }
 
-fn equal(a: &Value, b: &Value) -> bool {
-    match (a, b) {
-        (Value::Nil, Value::Nil) => true,
-        (Value::Nil, _) | (_, Value::Nil) => false,
-        (Value::Bool(x), Value::Bool(y)) => x == y,
-        (Value::Number(x), Value::Number(y)) => x == y,
-        (Value::Str(x), Value::Str(y)) => x == y,
-        (Value::Function(x), Value::Function(y)) => x == y,
-        _ => false,
-    }
-}
-
-/// Run a function body in a fresh frame: parameters in the frame's own scope, the
-/// globals beyond it, and the frame popped on every way out.
 fn call(
     index: usize,
     args: Vec<Value>,
@@ -213,7 +227,11 @@ fn call(
     if args.len() != f.params.len() {
         return Err(err(
             line,
-            &format!("Expected {} arguments but got {}.", f.params.len(), args.len()),
+            &format!(
+                "Expected {} arguments but got {}.",
+                f.params.len(),
+                args.len()
+            ),
         ));
     }
     if env.frame_depth() >= MAX_FRAMES {
@@ -221,7 +239,7 @@ fn call(
     }
     env.push_frame();
     for (p, v) in f.params.iter().zip(args) {
-        env.declare(&p.lexeme, v);
+        env.declare(p, v);
     }
     let result = (|| {
         for s in &f.body {
@@ -234,6 +252,18 @@ fn call(
         Ok(v) => Ok(v),
         Err(Flow::Return(v)) => Ok(v),
         Err(Flow::Error(e)) => Err(Flow::Error(e)),
+    }
+}
+
+fn equal(a: &Value, b: &Value) -> bool {
+    match (a, b) {
+        (Value::Nil, Value::Nil) => true,
+        (Value::Nil, _) | (_, Value::Nil) => false,
+        (Value::Bool(x), Value::Bool(y)) => x == y,
+        (Value::Number(x), Value::Number(y)) => x == y,
+        (Value::Str(x), Value::Str(y)) => x == y,
+        (Value::Function { index: x, .. }, Value::Function { index: y, .. }) => x == y,
+        _ => false,
     }
 }
 
@@ -255,7 +285,10 @@ fn compare(l: Value, r: Value, line: usize, f: fn(f64, f64) -> bool) -> Exec<Val
 }
 
 fn undefined(name: &Token) -> Flow {
-    err(name.line, &format!("Variable '{}' is not defined.", name.lexeme))
+    err(
+        name.line,
+        &format!("Variable '{}' is not defined.", name.lexeme),
+    )
 }
 
 fn err(line: usize, message: &str) -> Flow {
