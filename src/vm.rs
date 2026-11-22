@@ -40,10 +40,117 @@ struct Vm {
 
 impl Vm {
     fn run(&mut self) -> Result<(), RuntimeError> {
-        // TODO(you): the dispatch loop: one match over Op. Spec 6.1 requires it to print
-        //            exactly what the interpreter prints, down to the exit code.
-        todo!("Vm::run")
+    loop {
+        let frame = self.frame();
+        let function = frame.function;
+        let ip = frame.ip;
+        let base = frame.base;
+        let op = self.chunk(function).code[ip];
+        let line = self.chunk(function).lines[ip];
+        self.frame_mut().ip += 1;
+
+        match op {
+            Op::Constant(i) => {
+                let v = self.chunk(function).constants[i].clone();
+                self.stack.push(v);
+            }
+            Op::Nil => self.stack.push(Value::Nil),
+            Op::True => self.stack.push(Value::Bool(true)),
+            Op::False => self.stack.push(Value::Bool(false)),
+            Op::Pop => { self.pop(); }
+
+            Op::DefineGlobal(i) => {
+                let name = self.name(function, i);
+                let v = self.pop();
+                self.globals.insert(name, v);
+            }
+            Op::GetGlobal(i) => {
+                let name = self.name(function, i);
+                match self.globals.get(&name) {
+                    Some(v) => self.stack.push(v.clone()),
+                    None => return Err(undefined(line, &name)),
+                }
+            }
+            Op::SetGlobal(i) => {
+                let name = self.name(function, i);
+                let v = self.peek().clone(); // assignment is an expression: leave it
+                match self.globals.get_mut(&name) {
+                    Some(slot) => { *slot = v; }
+                    None => return Err(undefined(line, &name)),
+                }
+            }
+            Op::GetLocal(i) => {
+                let v = self.stack[base + i].clone();
+                self.stack.push(v);
+            }
+            Op::SetLocal(i) => {
+                let v = self.peek().clone();
+                self.stack[base + i] = v;
+            }
+
+            Op::Equal => self.binary_value(|a, b| Value::Bool(equal_values(&a, &b))),
+            Op::NotEqual => self.binary_value(|a, b| Value::Bool(!equal_values(&a, &b))),
+            Op::Greater => self.compare(line, |a, b| a > b)?,
+            Op::GreaterEqual => self.compare(line, |a, b| a >= b)?,
+            Op::Less => self.compare(line, |a, b| a < b)?,
+            Op::LessEqual => self.compare(line, |a, b| a <= b)?,
+
+            Op::Add => {
+                let (a, b) = self.pop_two();
+                match (a, b) {
+                    (Value::Number(x), Value::Number(y)) => self.stack.push(Value::Number(x + y)),
+                    (Value::Str(x), Value::Str(y)) => self.stack.push(Value::Str(x + &y)),
+                    _ => return Err(error(line, "Operands must be two numbers or two strings.")),
+                }
+            }
+            Op::Subtract => self.arith(line, |a, b| a - b)?,
+            Op::Multiply => self.arith(line, |a, b| a * b)?,
+            Op::Divide => {
+                let (a, b) = self.numbers(line)?;
+                if b == 0.0 { return Err(error(line, "Division by zero.")); }
+                self.stack.push(Value::Number(a / b));
+            }
+            Op::Not => {
+                let v = self.pop();
+                self.stack.push(Value::Bool(!v.is_truthy()));
+            }
+            Op::Negate => {
+                let v = self.pop();
+                match v {
+                    Value::Number(n) => self.stack.push(Value::Number(-n)),
+                    _ => return Err(error(line, "Operand must be a number.")),
+                }
+            }
+            Op::Print => {
+                let v = self.pop();
+                println!("{}", v);
+            }
+
+            Op::Jump(t) => { self.frame_mut().ip = t; }
+            Op::JumpIfFalse(t) => {
+                if !self.peek().is_truthy() {
+                    self.frame_mut().ip = t;
+                }
+                // leaves the value: `and`/`or` need it
+            }
+            Op::Call(argc) => self.call(argc, line)?,
+            Op::Return => {
+                let result = self.pop();
+                let base = self.frame().base;
+                let function = self.frame().function;
+                // Truncate the frame: everything from the callee down (base - 1).
+                self.stack.truncate(base - 1);
+                self.frames.pop();
+                self.stack.push(result);
+                // If the script's frame returns, the program ends.
+                if self.frames.is_empty() {
+                    return Ok(());
+                }
+                let _ = function;
+            }
+        }
     }
+}
 
     /// The callee sits under its arguments, and the arguments are already where the new
     /// frame's slots need them. Nothing is moved.
