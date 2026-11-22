@@ -224,10 +224,28 @@ impl<'a> Compiler<'a> {
     /// A global is written into the globals map. A local is already on the stack in the
     /// slot the resolver gave it, so declaring one emits nothing.
     fn declare(&mut self, name: &str, slot: Option<usize>, line: usize) {
-        // TODO(you): a global is written into the globals map; a local is already on the stack
-        //            in the slot resolver.rs gave it, so it emits nothing.
-        todo!("declare")
+    match slot {
+        Some(_) => { /* local: already on the stack in its slot; emits nothing */ }
+        None => {
+            let idx = self.name_constant(name);
+            self.chunk.write(Op::DefineGlobal(idx), line);
+        }
     }
+}
+
+fn end_scope(&mut self, locals: usize) {
+    for _ in 0..locals {
+        self.chunk.write(Op::Pop, self.chunk.last_line());
+    }
+}
+
+fn patch(&mut self, at: usize) {
+    let target = self.chunk.code.len();
+    match &mut self.chunk.code[at] {
+        Op::Jump(t) | Op::JumpIfFalse(t) => *t = target,
+        _ => panic!("patch called on a non-jump"),
+    }
+}
 
     fn name_constant(&mut self, name: &str) -> usize {
         self.chunk.constant(Value::Str(name.to_string()))
