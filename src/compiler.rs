@@ -62,9 +62,75 @@ impl<'a> Compiler<'a> {
     // --- statements -------------------------------------------------------------------
 
     fn statement(&mut self, stmt: &Stmt) {
-        // TODO(you): emit code for one statement.
-        todo!("statement")
+    match stmt {
+        Stmt::Expression(e) => {
+            let line = self.expression(e);
+            self.chunk.write(Op::Pop, line);
+        }
+        Stmt::Print(e) => {
+            let line = self.expression(e);
+            self.chunk.write(Op::Print, line);
+        }
+        Stmt::Var { name, initialiser, slot } => {
+            match initialiser {
+                Some(e) => { self.expression(e); }
+                None => { self.chunk.write(Op::Nil, self.chunk.last_line()); }
+            }
+            self.declare(&name.lexeme, *slot, self.chunk.last_line());
+        }
+        Stmt::Block { body, locals } => {
+            self.statements(body);
+            self.end_scope(*locals);
+        }
+        Stmt::If { condition, then_branch, else_branch } => {
+            let line = self.expression(condition);
+            let jump_if_false = self.chunk.write(Op::JumpIfFalse(0), line);
+            // JumpIfFalse leaves the condition on the stack (spec 4.1), so pop it.
+            self.chunk.write(Op::Pop, line);
+            self.statement(then_branch);
+            match else_branch {
+                Some(alt) => {
+                    let jump_over = self.chunk.write(Op::Jump(0), line);
+                    self.patch(jump_if_false);
+                    self.chunk.write(Op::Pop, line); // pop condition on else path
+                    self.statement(alt);
+                    self.patch(jump_over);
+                }
+                None => {
+                    self.patch(jump_if_false);
+                    self.chunk.write(Op::Pop, line); // pop condition on false path
+                }
+            }
+        }
+        Stmt::While { condition, body } => {
+            let loop_start = self.chunk.code.len();
+            let line = self.expression(condition);
+            let exit = self.chunk.write(Op::JumpIfFalse(0), line);
+            self.chunk.write(Op::Pop, line); // drop condition on truthy path
+            self.statement(body);
+            self.chunk.write(Op::Jump(loop_start), line);
+            self.patch(exit);
+            self.chunk.write(Op::Pop, line); // drop condition on exit path
+        }
+        Stmt::Function { name, slot, .. } => {
+            // A function declaration emits the name and its index as a constant.
+            let index = self.program.functions.iter()
+                .position(|f| f.name == name.lexeme)
+                .expect("function order preserved");
+            self.chunk.write(Op::Constant(
+                self.chunk.constant(Value::Function(index))
+            ), name.line);
+            self.declare(&name.lexeme, *slot, name.line);
+        }
+        Stmt::Return(value) => {
+            match value {
+                Some(e) => { self.expression(e); }
+                None => { self.chunk.write(Op::Nil, self.chunk.last_line()); }
+            }
+            self.chunk.write(Op::Return, self.chunk.last_line());
+        }
     }
+}
 
     // --- expressions ------------------------------------------------------------------
 
