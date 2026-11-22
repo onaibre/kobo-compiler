@@ -142,7 +142,7 @@ fn evaluate(expr: &Expr, env: &mut Environment, program: &Program) -> Exec<Value
 
         Expr::Unary { op, right, .. } => {
             let v = evaluate(right, env, program)?;
-            match op.token_type {
+            match op.kind {
                 TokenType::Minus => match v {
                     Value::Number(n) => Ok(Value::Number(-n)),
                     _ => Err(err(op.line, "Operand must be a number.")),
@@ -156,7 +156,7 @@ fn evaluate(expr: &Expr, env: &mut Environment, program: &Program) -> Exec<Value
             let l = evaluate(left, env, program)?;
             let r = evaluate(right, env, program)?;
             let line = op.line;
-            match op.token_type {
+            match op.kind {
                 TokenType::Plus => match (l, r) {
                     (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a + b)),
                     (Value::Str(a), Value::Str(b)) => Ok(Value::Str(a + &b)),
@@ -183,7 +183,7 @@ fn evaluate(expr: &Expr, env: &mut Environment, program: &Program) -> Exec<Value
 
         Expr::Logical { left, op, right } => {
             let l = evaluate(left, env, program)?;
-            match op.token_type {
+            match op.kind {
                 TokenType::Or => {
                     if l.is_truthy() {
                         Ok(l)

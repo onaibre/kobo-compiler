@@ -187,7 +187,7 @@ impl<'a> Compiler<'a> {
             }
             Expr::Unary { op, right, .. } => {
                 self.expression(right);
-                let o = match op.token_type {
+                let o = match op.kind {
                     TokenType::Minus => Op::Negate,
                     TokenType::Bang => Op::Not,
                     _ => unreachable!(),
@@ -197,7 +197,7 @@ impl<'a> Compiler<'a> {
             Expr::Binary { left, op, right } => {
                 self.expression(left);
                 self.expression(right);
-                let o = match op.token_type {
+                let o = match op.kind {
                     TokenType::Plus => Op::Add,
                     TokenType::Minus => Op::Subtract,
                     TokenType::Star => Op::Multiply,
@@ -215,7 +215,7 @@ impl<'a> Compiler<'a> {
             Expr::Logical { left, op, right } => {
                 self.expression(left);
                 let line = op.line;
-                match op.token_type {
+                match op.kind {
                     TokenType::Or => {
                         let jump = self.chunk.write(Op::JumpIfFalse(0), line);
                         let end = self.chunk.write(Op::Jump(0), line);
