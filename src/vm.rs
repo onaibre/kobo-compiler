@@ -48,11 +48,31 @@ impl Vm {
     /// The callee sits under its arguments, and the arguments are already where the new
     /// frame's slots need them. Nothing is moved.
     fn call(&mut self, argc: usize, line: usize) -> Result<(), RuntimeError> {
-        // TODO(you): spec 4.3 again, on a stack instead of a tree: the arguments are already
-        //            lying where the callee's slots need them.
-        todo!("Vm::call")
+    // Stack layout: [..., callee, arg0, ..., arg{argc-1}]
+    let callee_idx = self.stack.len() - argc - 1;
+    let function = match &self.stack[callee_idx] {
+        Value::Function(i) => *i,
+        _ => return Err(error(line, "Can only call functions.")),
+    };
+    let arity = self.bytecode.functions[function].arity;
+    if argc != arity {
+        return Err(error(
+            line,
+            &format!("Expected {} arguments but got {}.", arity, argc),
+        ));
     }
-
+    if self.frames.len() >= MAX_FRAMES {
+        return Err(error(line, "Stack overflow."));
+    }
+    // base is where slot 0 (arg0) lives: just above the callee.
+    let base = callee_idx + 1;
+    self.frames.push(Frame {
+        function: Some(function),
+        ip: 0,
+        base,
+    });
+    Ok(())
+}
     // --- primitives -------------------------------------------------------------------
 
     fn chunk(&self, function: Option<usize>) -> &Chunk {
